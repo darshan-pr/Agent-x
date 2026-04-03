@@ -1,0 +1,35 @@
+{
+  "name": "aiagent",
+  "version": "1.0.0",
+  "description": "Learning-friendly TypeScript CLI agent with Groq",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli/main.ts",
+    "agent": "tsx src/cli/main.ts",
+    "start": "node dist/cli/main.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "agent",
+    "typescript",
+    "groq",
+    "cli"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.4.0",
+    "groq-sdk": "^1.1.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.2"
+  }
+}
