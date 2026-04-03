@@ -2,9 +2,14 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { loadConfig } from "../config/env.js";
 import { AgentOrchestrator } from "../core/orchestrator.js";
-import { GroqChatModel } from "../llm/groqClient.js";
+import { createChatModelForProvider } from "../llm/modelFactory.js";
 import { promptConfirmation } from "./confirm.js";
 import { createActivityLogger } from "./activityLogger.js";
+import { summarizeFileWithReaderSubagent } from "../subagents/analyzer.js";
+import {
+  generateExecutionPlanWithPlannerSubagent,
+  planVerificationWithEditorSubagent
+} from "../subagents/planner.js";
 
 const AGENT_NAME = "AgentX";
 const ANSI = {
@@ -93,12 +98,8 @@ function parseArgs(): { once: boolean; initialPrompt: string } {
 async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createActivityLogger({ agentName: AGENT_NAME, color: Boolean(process.stdout.isTTY) });
-  const model = new GroqChatModel(
-    config.apiKey,
-    config.model,
-    config.temperature,
-    config.rateLimit
-  );
+  const model = createChatModelForProvider(config.coreProvider, config);
+  const subagentModel = createChatModelForProvider(config.subagentProvider, config);
   const { once, initialPrompt } = parseArgs();
   const rl = readline.createInterface({ input, output });
 
@@ -107,7 +108,13 @@ async function main(): Promise<void> {
       model,
       config,
       logger,
-      confirmCommand: (command) => promptConfirmation(command, rl)
+      confirmCommand: (command) => promptConfirmation(command, rl),
+      summarizeFile: (_mainModel, filePath, fileContent) =>
+        summarizeFileWithReaderSubagent(subagentModel, filePath, fileContent),
+      buildPlan: (_mainModel, userInput) =>
+        generateExecutionPlanWithPlannerSubagent(subagentModel, userInput),
+      planVerification: (_mainModel, goal, editMessage) =>
+        planVerificationWithEditorSubagent(subagentModel, goal, editMessage)
     });
 
     if (once) {

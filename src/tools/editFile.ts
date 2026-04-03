@@ -34,6 +34,61 @@ function replaceAll(source: string, search: string, replace: string): { output: 
   };
 }
 
+function escapeForRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildFlexibleWhitespaceRegex(search: string, global = false): RegExp | null {
+  if (!/\s/.test(search)) {
+    return null;
+  }
+
+  const tokens = search.match(/\s+|[^\s]+/g);
+  if (!tokens || tokens.length === 0) {
+    return null;
+  }
+
+  const pattern = tokens
+    .map((token) => (/^\s+$/.test(token) ? "\\s+" : escapeForRegex(token)))
+    .join("");
+
+  if (!pattern) {
+    return null;
+  }
+
+  return new RegExp(pattern, global ? "g" : undefined);
+}
+
+function replaceFlexibleWhitespace(
+  source: string,
+  search: string,
+  replace: string,
+  replaceEveryMatch: boolean
+): { output: string; replacements: number } {
+  const regex = buildFlexibleWhitespaceRegex(search, replaceEveryMatch);
+  if (!regex) {
+    return { output: source, replacements: 0 };
+  }
+
+  if (!replaceEveryMatch) {
+    if (!regex.test(source)) {
+      return { output: source, replacements: 0 };
+    }
+    return {
+      output: source.replace(regex, () => replace),
+      replacements: 1
+    };
+  }
+
+  let replacements = 0;
+  const output = source.replace(regex, () => {
+    replacements += 1;
+    return replace;
+  });
+
+  return { output, replacements };
+}
+
 function buildBackupPath(workspaceRoot: string, relativePath: string): string {
   const safeRelative = relativePath.replace(/[\\/]/g, "__");
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -115,10 +170,14 @@ export async function editFile(
   const replaced = patchSpec.all
     ? replaceAll(originalContent, searchText, patchSpec.replace)
     : replaceOnce(originalContent, searchText, patchSpec.replace);
-  const removedLines = countLines(searchText) * replaced.replacements;
-  const addedLines = countLines(patchSpec.replace) * replaced.replacements;
+  const resilientReplacement =
+    replaced.replacements === 0
+      ? replaceFlexibleWhitespace(originalContent, searchText, patchSpec.replace, patchSpec.all === true)
+      : replaced;
+  const removedLines = countLines(searchText) * resilientReplacement.replacements;
+  const addedLines = countLines(patchSpec.replace) * resilientReplacement.replacements;
 
-  if (replaced.replacements === 0) {
+  if (resilientReplacement.replacements === 0) {
     return {
       name: "editFile",
       success: false,
@@ -135,16 +194,16 @@ export async function editFile(
     await fs.writeFile(backupPath, originalContent, "utf8");
   }
 
-  await fs.writeFile(absolutePath, replaced.output, "utf8");
+  await fs.writeFile(absolutePath, resilientReplacement.output, "utf8");
 
   return {
     name: "editFile",
     success: true,
     path: relativePath,
-    replacements: replaced.replacements,
+    replacements: resilientReplacement.replacements,
     addedLines,
     removedLines,
     backupPath: backupPath ? toWorkspaceRelative(workspaceRoot, backupPath) : undefined,
-    message: `Applied ${replaced.replacements} replacement(s).`
+    message: `Applied ${resilientReplacement.replacements} replacement(s).`
   };
 }

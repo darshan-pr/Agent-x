@@ -18,6 +18,12 @@ function createConfig(workspaceRoot: string, maxSteps = 4): AgentConfig {
   return {
     apiKey: "test",
     model: "test",
+    coreProvider: "groq",
+    subagentProvider: "groq",
+    groqApiKeys: ["test"],
+    geminiApiKeys: [],
+    groqModel: "test",
+    geminiModel: "test",
     temperature: 0,
     maxSteps,
     maxMessages: 20,

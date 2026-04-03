@@ -10,9 +10,17 @@ export interface RateLimitConfig {
   maxDelayMs: number;
 }
 
+export type LlmProvider = "groq" | "gemini";
+
 export interface AgentConfig {
   apiKey: string;
   model: string;
+  coreProvider: LlmProvider;
+  subagentProvider: LlmProvider;
+  groqApiKeys: string[];
+  geminiApiKeys: string[];
+  groqModel: string;
+  geminiModel: string;
   temperature: number;
   maxSteps: number;
   maxMessages: number;

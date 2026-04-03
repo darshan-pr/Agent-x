@@ -322,7 +322,7 @@ export class AgentOrchestrator {
         assistant = await this.model.complete({
           messages: session.recentMessages,
           tools: TOOL_DEFINITIONS,
-          temperature: this.config.temperature
+          temperature: Math.min(this.config.temperature, 0.1)
         });
       } catch (error) {
         const shortError = extractErrorMessage(error);
@@ -336,7 +336,8 @@ export class AgentOrchestrator {
             role: "system",
             content:
               "Your previous output had malformed tool-call arguments. " +
-              "Retry the same intent with valid JSON tool arguments and required fields only."
+              "Retry the same intent with valid JSON tool arguments and required fields only. " +
+              "For editFile, use small exact search snippets copied from readFile output."
           });
           continue;
         }
