@@ -62,6 +62,15 @@ export function createActivityLogger(options: ActivityLoggerOptions): AgentLogge
     const message = asString(payload.message);
 
     if (!success) {
+      if (toolName === "runCommand") {
+        const command = asString(payload.command) ?? "";
+        const exitCode = asNumber(payload.exitCode);
+        const blocked = asBoolean(payload.blocked) ?? false;
+        const stderr = clipText(asString(payload.stderr) ?? "", 140);
+        const reason = blocked ? "blocked" : `exit=${exitCode ?? "unknown"}`;
+        const suffix = stderr ? ` | ${stderr}` : "";
+        return withColor(`  x Command(${command}) ${reason}${suffix}`, ANSI.red, color);
+      }
       const error = asString(payload.error);
       const detail = error ? `${message ?? "Failed."} (${error})` : (message ?? "Failed.");
       return withColor(`  x ${toolName}: ${detail}`, ANSI.red, color);
@@ -105,11 +114,13 @@ export function createActivityLogger(options: ActivityLoggerOptions): AgentLogge
       const command = asString(payload.command) ?? "";
       const exitCode = asNumber(payload.exitCode);
       const blocked = asBoolean(payload.blocked) ?? false;
+      const stderr = clipText(asString(payload.stderr) ?? "", 140);
       if (blocked) {
         return withColor(`  x Command blocked: ${command}`, ANSI.red, color);
       }
+      const suffix = stderr ? ` | ${stderr}` : "";
       return withColor(
-        `  ✓ Command(${command}) exit=${exitCode ?? "unknown"}`,
+        `  ✓ Command(${command}) exit=${exitCode ?? "unknown"}${suffix}`,
         ANSI.green,
         color
       );

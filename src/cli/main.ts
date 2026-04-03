@@ -3,7 +3,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { loadConfig } from "../config/env.js";
 import { AgentOrchestrator } from "../core/orchestrator.js";
 import { createChatModelForProvider } from "../llm/modelFactory.js";
-import { promptConfirmation } from "./confirm.js";
+import { createConfirmationState, promptConfirmation } from "./confirm.js";
 import { createActivityLogger } from "./activityLogger.js";
 import { summarizeFileWithReaderSubagent } from "../subagents/analyzer.js";
 import {
@@ -82,6 +82,8 @@ function printHelp(): void {
   console.log("\nCommands:");
   console.log("  /help   Show commands");
   console.log("  /clear  Reset chat context");
+  console.log("  /confirm on|off  Toggle per-command confirmations");
+  console.log("  /approvals  Show session auto-approval state");
   console.log("  /exit   Quit the CLI\n");
 }
 
@@ -100,6 +102,7 @@ async function main(): Promise<void> {
   const logger = createActivityLogger({ agentName: AGENT_NAME, color: Boolean(process.stdout.isTTY) });
   const model = createChatModelForProvider(config.coreProvider, config);
   const subagentModel = createChatModelForProvider(config.subagentProvider, config);
+  const confirmationState = createConfirmationState();
   const { once, initialPrompt } = parseArgs();
   const rl = readline.createInterface({ input, output });
 
@@ -108,7 +111,7 @@ async function main(): Promise<void> {
       model,
       config,
       logger,
-      confirmCommand: (command) => promptConfirmation(command, rl),
+      confirmCommand: (command) => promptConfirmation(command, rl, confirmationState),
       summarizeFile: (_mainModel, filePath, fileContent) =>
         summarizeFileWithReaderSubagent(subagentModel, filePath, fileContent),
       buildPlan: (_mainModel, userInput) =>
@@ -163,6 +166,28 @@ async function main(): Promise<void> {
       if (command === "/clear") {
         session = orchestrator.createSession("interactive");
         console.log(`${AGENT_LABEL}> context cleared\n`);
+        continue;
+      }
+
+      if (command === "/confirm on") {
+        config.executionPolicy.requireConfirmation = true;
+        console.log(`${AGENT_LABEL}> command confirmation enabled\n`);
+        continue;
+      }
+
+      if (command === "/confirm off") {
+        config.executionPolicy.requireConfirmation = false;
+        console.log(`${AGENT_LABEL}> command confirmation disabled\n`);
+        continue;
+      }
+
+      if (command === "/approvals") {
+        const prefixes = [...confirmationState.allowedPrefixes];
+        const mode = confirmationState.mode;
+        console.log(`${AGENT_LABEL}> approval mode: ${mode}`);
+        console.log(
+          `${AGENT_LABEL}> approved prefixes: ${prefixes.length > 0 ? prefixes.join(", ") : "(none)"}\n`
+        );
         continue;
       }
 

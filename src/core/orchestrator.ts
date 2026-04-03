@@ -100,6 +100,56 @@ function isToolUseFailure(error: unknown): boolean {
   );
 }
 
+function isSmallTalkInput(input: string): boolean {
+  const normalized = input
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s']/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!normalized) {
+    return false;
+  }
+
+  const directMatches = new Set([
+    "hi",
+    "hii",
+    "hiii",
+    "hello",
+    "hey",
+    "hey there",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "thanks",
+    "thank you",
+    "thx"
+  ]);
+  if (directMatches.has(normalized)) {
+    return true;
+  }
+
+  if (/^(hi+|hello+|hey+)(\s+(there|agentx|agent x))?$/.test(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
+function buildSmallTalkReply(input: string): string {
+  const normalized = input
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s']/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (/^(thanks|thank you|thx)$/.test(normalized)) {
+    return "You are welcome. Tell me what you want to build or fix, and I will handle it.";
+  }
+
+  return "Hi! I can help with coding, editing files, and running commands. Tell me what you want done.";
+}
+
 function inferExecutionPlan(userInput: string): string[] {
   const lower = userInput.toLowerCase();
   const steps: string[] = ["Understand the request and identify relevant files."];
@@ -232,13 +282,15 @@ function buildToolResultLogPayload(
     };
   }
 
-  if (result.name === "runCommand" && result.success) {
+  if (result.name === "runCommand" && "command" in result) {
     return {
       ...base,
       command: result.command,
       cwd: toAbsoluteDisplayPath(workspaceRoot, result.cwd),
       exitCode: result.exitCode,
       blocked: result.blocked,
+      stdout: result.stdout,
+      stderr: result.stderr,
       stdoutLines: result.stdout ? result.stdout.split(/\r?\n/).length : 0,
       stderrLines: result.stderr ? result.stderr.split(/\r?\n/).length : 0
     };
@@ -297,6 +349,39 @@ export class AgentOrchestrator {
     this.logger.log("orchestrator.turn.start", {
       userInput: clipText(userInput, 220)
     });
+
+    if (isSmallTalkInput(userInput)) {
+      const reply = buildSmallTalkReply(userInput);
+      const assistantMessage: LlmMessage = {
+        role: "assistant",
+        content: reply
+      };
+      recordMessage(session, assistantMessage);
+      this.logger.log("orchestrator.plan", {
+        steps: ["Respond conversationally without tools."]
+      });
+      this.logger.log("orchestrator.step.start", {
+        step: 1,
+        totalMessages: session.recentMessages.length
+      });
+      this.logger.log("orchestrator.assistant.note", {
+        step: 1,
+        text: clipText(reply, 300)
+      });
+      this.logger.log("orchestrator.step.decision", {
+        step: 1,
+        decision: "final_response"
+      });
+      this.logger.log("orchestrator.complete", {
+        step: 1
+      });
+      return {
+        output: reply,
+        steps: 1,
+        session
+      };
+    }
+
     const planSteps = await buildExecutionPlan(this.model, userInput, this.buildPlan);
     this.logger.log("orchestrator.plan", {
       steps: planSteps

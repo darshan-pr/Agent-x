@@ -40,6 +40,27 @@ function createConfig(workspaceRoot: string, maxSteps = 4): AgentConfig {
 const silentLogger = { log: () => undefined };
 
 describe("AgentOrchestrator", () => {
+  it("handles small-talk greetings without invoking tools or model calls", async () => {
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aiagent-orch-greeting-"));
+    tempDirs.push(tempRoot);
+
+    const model = new QueueChatModel([]);
+
+    const orchestrator = new AgentOrchestrator({
+      model,
+      config: createConfig(tempRoot, 2),
+      logger: silentLogger,
+      confirmCommand: async () => true,
+      summarizeFile: async () => "",
+      buildPlan: async () => [],
+      planVerification: async () => ""
+    });
+
+    const result = await orchestrator.runTask("Hii");
+    expect(result.steps).toBe(1);
+    expect(result.output.toLowerCase()).toContain("hi");
+  });
+
   it("stops after max steps", async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "aiagent-orch-max-"));
     tempDirs.push(tempRoot);

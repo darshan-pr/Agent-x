@@ -54,22 +54,64 @@ function stringifyToolResponse(content: string): Record<string, unknown> {
   return { content };
 }
 
-function toGeminiRequest(params: CompleteChatParams): Record<string, unknown> {
+export function toGeminiRequest(params: CompleteChatParams): Record<string, unknown> {
   const toolNameByCallId = new Map<string, string>();
   const contents: Array<Record<string, unknown>> = [];
   const systemMessages: string[] = [];
+  let lastRole: "user" | "model" | null = null;
 
-  for (const message of params.messages) {
+  function pushUser(parts: Array<Record<string, unknown>>): void {
+    contents.push({
+      role: "user",
+      parts
+    });
+    lastRole = "user";
+  }
+
+  function pushModel(parts: Array<Record<string, unknown>>): void {
+    if (parts.length === 0) {
+      return;
+    }
+    if (lastRole !== "user") {
+      return;
+    }
+    contents.push({
+      role: "model",
+      parts
+    });
+    lastRole = "model";
+  }
+
+  function appendToolResponsePart(part: Record<string, unknown>): void {
+    const lastEntry = contents[contents.length - 1] as
+      | { role?: unknown; parts?: Array<Record<string, unknown>> }
+      | undefined;
+    if (
+      lastRole === "user" &&
+      lastEntry?.role === "user" &&
+      Array.isArray(lastEntry.parts) &&
+      lastEntry.parts.every(
+        (existingPart) =>
+          typeof existingPart === "object" &&
+          existingPart !== null &&
+          "functionResponse" in existingPart
+      )
+    ) {
+      lastEntry.parts.push(part);
+      return;
+    }
+    pushUser([part]);
+  }
+
+  for (let index = 0; index < params.messages.length; index += 1) {
+    const message = params.messages[index];
     if (message.role === "system") {
       systemMessages.push(message.content);
       continue;
     }
 
     if (message.role === "user") {
-      contents.push({
-        role: "user",
-        parts: [{ text: message.content }]
-      });
+      pushUser([{ text: message.content }]);
       continue;
     }
 
@@ -79,7 +121,24 @@ function toGeminiRequest(params: CompleteChatParams): Record<string, unknown> {
         parts.push({ text: message.content });
       }
       if (message.toolCalls && message.toolCalls.length > 0) {
+        let scanIndex = index + 1;
+        const availableToolResponses = new Set<string>();
+        while (scanIndex < params.messages.length) {
+          const next = params.messages[scanIndex];
+          if (next.role !== "tool") {
+            break;
+          }
+          if (next.toolCallId) {
+            availableToolResponses.add(next.toolCallId);
+          }
+          scanIndex += 1;
+        }
+
+        const canEmitFunctionCalls = lastRole === "user";
         for (const call of message.toolCalls) {
+          if (!canEmitFunctionCalls || !availableToolResponses.has(call.id)) {
+            continue;
+          }
           toolNameByCallId.set(call.id, call.name);
           let args: Record<string, unknown> = {};
           try {
@@ -98,36 +157,75 @@ function toGeminiRequest(params: CompleteChatParams): Record<string, unknown> {
           });
         }
       }
-      if (parts.length > 0) {
-        contents.push({
-          role: "model",
-          parts
-        });
-      }
+      pushModel(parts);
       continue;
     }
 
     if (message.role === "tool") {
       const toolName = message.toolCallId ? toolNameByCallId.get(message.toolCallId) : undefined;
       if (!toolName) {
-        contents.push({
-          role: "user",
-          parts: [{ text: message.content }]
-        });
         continue;
       }
-      contents.push({
-        role: "user",
-        parts: [
-          {
-            functionResponse: {
-              name: toolName,
-              response: stringifyToolResponse(message.content)
-            }
-          }
-        ]
+      if (lastRole !== "model" && lastRole !== "user") {
+        continue;
+      }
+      appendToolResponsePart({
+        functionResponse: {
+          name: toolName,
+          response: stringifyToolResponse(message.content)
+        }
       });
+      continue;
     }
+  }
+
+  // Ensure the first conversational turn is user-facing for Gemini's sequencing rules.
+  while (contents.length > 0) {
+    const firstRole = contents[0]?.role;
+    if (firstRole === "user") {
+      break;
+    }
+    contents.shift();
+  }
+
+  if (contents.length > 0) {
+    let cursor = 1;
+    while (cursor < contents.length) {
+      const prevRole = contents[cursor - 1]?.role;
+      const currentRole = contents[cursor]?.role;
+      if (prevRole === currentRole) {
+        const currentParts =
+          (contents[cursor]?.parts as Array<Record<string, unknown>> | undefined) ?? [];
+        const previousParts =
+          (contents[cursor - 1]?.parts as Array<Record<string, unknown>> | undefined) ?? [];
+        if (currentRole === "user") {
+          previousParts.push(...currentParts);
+          contents.splice(cursor, 1);
+          continue;
+        }
+        if (currentRole === "model") {
+          previousParts.push(...currentParts);
+          contents.splice(cursor, 1);
+          continue;
+        }
+      }
+      cursor += 1;
+    }
+  }
+
+  // Drop trailing model function-call turns without a following user response.
+  while (contents.length > 0) {
+    const last = contents[contents.length - 1] as { role?: unknown; parts?: Array<Record<string, unknown>> };
+    if (last.role !== "model") {
+      break;
+    }
+    const hasFunctionCall = (last.parts ?? []).some(
+      (part) => typeof part === "object" && part !== null && "functionCall" in part
+    );
+    if (!hasFunctionCall) {
+      break;
+    }
+    contents.pop();
   }
 
   const request: Record<string, unknown> = {
